@@ -119,10 +119,10 @@ def main(url):
                 audioFile = os.path.join(dllist[i]["dir"], dllist[i]["out"])
             else:
                 videoFile = os.path.join(dllist[i]["dir"], dllist[i]["out"])
-                # if video file format is webm, change to mp4 but copy the codec, it's very fast
-                final = videoFile.replace('-video', '').replace('webm', 'mp4')
-                # when audio file format is webm, codec is opus which ffmpeg doesn't support to encode.
-                if os.path.splitext(audioFile)[1] == ".webm":
+                # if video file format is webm, use mkv to merge the video and audio
+                final = videoFile.replace('-video', '').replace('webm', 'mkv')
+                # when audio file format is webm, codec is opus which ffmpeg doesn't support to encode for mp4.
+                if os.path.splitext(audioFile)[1] == ".webm" and os.path.splitext(videoFile)[1] == ".mp4":
                     acodec = "mp3"
                 else:
                     acodec = "copy"
@@ -132,7 +132,7 @@ def main(url):
                 os.remove(videoFile)
                 os.remove(audioFile)
                 # try to download the subtitle
-                download_youtube_subtitle(dllist[i]["id"], final.replace("mp4", "srt"))
+                download_youtube_subtitle(dllist[i]["id"], os.path.splitext(final)[0]+".srt")
     else:
         if len(dllist) > 1:
             tmp = tempfile.mkstemp(suffix=".txt", dir=os.getcwd(), text=True)[1]
