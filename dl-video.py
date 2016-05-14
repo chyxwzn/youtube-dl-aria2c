@@ -65,6 +65,20 @@ def download_youtube_subtitle(videoID, filename):
                 f.write(html.read().decode("utf-8"))
                 print("finish: "+filename)
 
+def get_download_list_ted(url):
+    dllist = []
+    with sp.Popen(["youtube-dl", "--sub-format", "srt", "--sub-lang", "en", "--write-sub", "-j", url], stdout=sp.PIPE) as proc:
+        # discard the last empty line
+        info = proc.stdout.read().decode("utf-8").split("\n")[:-1]
+        for line in info:
+            episode = json.loads(line)
+            dllist.append({"dir":os.path.join(os.getcwd()),
+                "out":episode["_filename"].replace('-'+episode["id"], ''), "url":episode["url"]})
+            if episode["requested_subtitles"]:
+                dllist.append({"dir":os.path.join(os.getcwd()),
+                    "out":os.path.splitext(episode["_filename"].replace('-'+episode["id"], ''))[0]+".srt", "url":episode["requested_subtitles"]["en"]["url"]})
+    return dllist
+
 def get_download_list_others(url):
     dllist = []
     with sp.Popen(["youtube-dl", "-j", url], stdout=sp.PIPE) as proc:
@@ -104,9 +118,13 @@ def aria2c_download(dllist):
 
 def main(url):
     youtube = False
+    ted = False
     if "youtube" in url:
         youtube = True
         dllist = get_download_list_youtube(url)
+    elif "ted.com" in url:
+        ted = True
+        dllist = get_download_list_ted(url)
     else:
         dllist, final = get_download_list_others(url)
 
@@ -133,7 +151,7 @@ def main(url):
                 os.remove(audioFile)
                 # try to download the subtitle
                 download_youtube_subtitle(dllist[i]["id"], os.path.splitext(final)[0]+".srt")
-    else:
+    elif not ted:
         if len(dllist) > 1:
             tmp = tempfile.mkstemp(suffix=".txt", dir=os.getcwd(), text=True)[1]
             with open(tmp, "w") as f:
@@ -151,7 +169,7 @@ def main(url):
         if sys.platform == "darwin" and os.path.splitext(final)[1] == ".f4v" and os.path.exists(final):
             sp.run(['ffmpeg', '-i', final, '-vcodec', 'copy', '-acodec', 'copy', os.path.splitext(final)[0]+".mp4"], stdout=sp.PIPE, stderr=sp.PIPE)
             os.remove(final)
-    print("final file:" + final)
+        print("final file:" + final)
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:
