@@ -12,13 +12,14 @@ import json
 import time
 import tempfile
 
-def get_download_list_youtube(url):
+def get_download_list_youtube(url, autonumber):
     dllist = []
-    # with open("info.json", "r") as f:
-    #     info = f.read().split("\n")[:-1]
-    with sp.Popen(["youtube-dl", "-j", url], stdout=sp.PIPE) as proc:
-        # discard the last empty line
-        info = proc.stdout.read().decode("utf-8").split("\n")[:-1]
+    with open("info.json", "r") as f:
+        info = f.read().split("\n")[:-1]
+    # with sp.Popen(["youtube-dl", "-j", url], stdout=sp.PIPE) as proc:
+    #     # discard the last empty line
+    #     info = proc.stdout.read().decode("utf-8").split("\n")[:-1]
+        number = 0
         for line in info:
             episode = json.loads(line)
             if episode["playlist"]:
@@ -32,7 +33,12 @@ def get_download_list_youtube(url):
                     index += 1
                 else:
                     break
-            basename = os.path.splitext(episode["_filename"])[0].replace('-'+episode["id"], '')
+            number += 1
+            if autonumber:
+                prefix = str(number)+" - "
+            else:
+                prefix = ""
+            basename = prefix + os.path.splitext(episode["_filename"])[0].replace('-'+episode["id"], '')
             name = basename+"-audio."+formats[index - 1]["ext"]
             # download the audio with best quality
             dllist.append({"dir":os.path.join(os.getcwd(), playlist.replace('/', '_').replace(':', '-')),
@@ -102,32 +108,49 @@ def get_download_list_others(url):
     return dllist, episode["title"]+'.'+episode["ext"]
 
 def aria2c_download(dllist):
+    fail = False
     with rpc.ServerProxy('http://localhost:6800/rpc') as s:
         mc = rpc.MultiCall(s)
         for download in dllist:
             print(download["url"])
             mc.aria2.addUri([download["url"]], {"dir":download["dir"], "out":download["out"]})
             print("downloading: "+download["out"])
-        mc() #real execute, don't forget to call this
+        gids = list(mc()) #real execute, don't forget to call this
         print("waiting for download finish......")
+
         while True:
-            stat = s.aria2.getGlobalStat()
-            if stat["numActive"] == '0' and stat["numWaiting"] == '0':
+            mc = rpc.MultiCall(s)
+            for gid in gids:
+                mc.aria2.tellStatus(gid, ["gid", "status", "completedLength"])
+            completed = 0
+            for stat in mc():
+                if stat["status"] == "error":
+                    if stat["completedLength"] == 0:
+                        fail = True
+                        break
+                    index = gids.index(stat["gid"])
+                    gids.remove(stat["gid"])
+                    print("download again: " + dllist[index]["out"])
+                    s.aria2.removeDownloadResult(stat["gid"])
+                    gid = s.aria2.addUri([dllist[index]["url"]], {"dir":dllist[index]["dir"], "out":dllist[index]["out"]})
+                    gids.insert(index, gid)
+                elif stat["status"] == "complete":
+                    completed += 1
+            if fail or completed == len(gids):
                 break
             else:
-                time.sleep(2)
-        # aria2c doesn't support some urls, I don't know why.
-        if os.path.exists(os.path.join(download["dir"], download["out"])):
-            print("congratulation: download finish!")
-        else:
-            sys.exit("download fail!")
+                time.sleep(3)
+    if fail:
+        sys.exit("download fail!")
+    else:
+        print("congratulation: download finish!")
 
-def main(url):
+def main(url, autonumber=False):
     youtube = False
     ted = False
     if "youtube" in url:
         youtube = True
-        dllist = get_download_list_youtube(url)
+        dllist = get_download_list_youtube(url, autonumber)
     elif "ted.com" in url:
         ted = True
         dllist = get_download_list_ted(url)
@@ -178,7 +201,9 @@ def main(url):
         print("final file:" + final)
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
+    if len(sys.argv) < 2:
         sys.exit("Error: there's no download url")
+    elif len(sys.argv) == 3 and sys.argv[1] == "-an":
+        main(sys.argv[2], autonumber=True)
     else:
         main(sys.argv[1])
