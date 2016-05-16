@@ -11,14 +11,17 @@ import os.path
 import json
 import time
 import tempfile
+import chardet
 
 def get_download_list_youtube(url, autonumber):
     dllist = []
-    with open("info.json", "r") as f:
-        info = f.read().split("\n")[:-1]
-    # with sp.Popen(["youtube-dl", "-j", url], stdout=sp.PIPE) as proc:
-    #     # discard the last empty line
-    #     info = proc.stdout.read().decode("utf-8").split("\n")[:-1]
+    # with open("info.json", "rb") as f:
+    #     enc = chardet.detect(f.read(4096))["encoding"]
+    # with open("info.json", "r", encoding=enc.replace("LE","").replace("BE","")) as f:
+    #     info = f.read().split("\n")[:-1]
+    with sp.Popen(["youtube-dl", "-j", url], stdout=sp.PIPE) as proc:
+        # discard the last empty line
+        info = proc.stdout.read().decode("utf-8").split("\n")[:-1]
         number = 0
         for line in info:
             episode = json.loads(line)
@@ -60,7 +63,6 @@ def get_download_list_youtube(url, autonumber):
 
 def download_youtube_subtitle(videoID, filename):
     keepVid = "http://keepvid.com/?url="+up.quote_plus("http://youtube.com/watch?v="+videoID)+"&mode=subs"
-    print(keepVid)
     parser = etree.HTMLParser()
     root = etree.parse(keepVid, parser)
     anchor = root.find("//div[@id='dl']/a")
@@ -71,9 +73,21 @@ def download_youtube_subtitle(videoID, filename):
                 f.write(html.read().decode("utf-8"))
                 print("finish: "+filename)
 
+def autonumber_downloaded(dllist):
+    number = 0
+    for i in range(len(dllist)):
+        # each download has two parts, dash audio and dash video file
+        if i % 2 == 0:
+            number += 1
+        filename = dllist[i]["out"]
+        if os.path.exists(filename):
+            os.rename(filename, str(number)+" - "+filename)
+
 def get_download_list_ted(url):
     dllist = []
-    # with open("info.json", "r") as f:
+    # with open("info.json", "rb") as f:
+    #     enc = chardet.detect(f.read(4096))["encoding"]
+    # with open("info.json", "r", encoding=enc.replace("LE","").replace("BE","")) as f:
     #     info = f.read().split("\n")[:-1]
     with sp.Popen(["youtube-dl", "--sub-format", "srt", "--sub-lang", "en", "--write-sub", "-j", url], stdout=sp.PIPE) as proc:
         # discard the last empty line
@@ -140,10 +154,7 @@ def aria2c_download(dllist):
                 break
             else:
                 time.sleep(3)
-    if fail:
-        sys.exit("download fail!")
-    else:
-        print("congratulation: download finish!")
+    return fail
 
 def main(url, autonumber=False):
     youtube = False
@@ -157,7 +168,16 @@ def main(url, autonumber=False):
     else:
         dllist, final = get_download_list_others(url)
 
-    aria2c_download(dllist)
+    # for remedy
+    # autonumber_downloaded(dllist)
+    # fail = True
+    # fail = False
+
+    fail = aria2c_download(dllist)
+    if fail:
+        sys.exit("download fail!")
+    else:
+        print("congratulation: download finish!")
 
     if youtube:
         for i in range(len(dllist)):
@@ -179,7 +199,10 @@ def main(url, autonumber=False):
                 os.remove(videoFile)
                 os.remove(audioFile)
                 # try to download the subtitle
-                download_youtube_subtitle(dllist[i]["id"], os.path.splitext(final)[0]+".srt")
+                try:
+                    download_youtube_subtitle(dllist[i]["id"], os.path.splitext(final)[0]+".srt")
+                except:
+                    print("fail: http://keepvid.com/?url="+up.quote_plus("http://youtube.com/watch?v="+dllist[i]["id"])+"&mode=subs")
     elif not ted:
         if len(dllist) > 1:
             tmp = tempfile.mkstemp(suffix=".txt", dir=os.getcwd(), text=True)[1]
