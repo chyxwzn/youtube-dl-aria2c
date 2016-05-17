@@ -186,14 +186,9 @@ def main(url, autonumber=False):
                 audioFile = os.path.join(dllist[i]["dir"], dllist[i]["out"])
             else:
                 videoFile = os.path.join(dllist[i]["dir"], dllist[i]["out"])
-                # if video file format is webm, use mkv to merge the video and audio
-                final = videoFile.replace('-video', '').replace('webm', 'mkv')
-                # when audio file format is webm, codec is opus which ffmpeg doesn't support to encode for mp4.
-                if os.path.splitext(audioFile)[1] == ".webm" and os.path.splitext(videoFile)[1] == ".mp4":
-                    acodec = "mp3"
-                else:
-                    acodec = "copy"
-                sp.run(['ffmpeg', '-i', videoFile, '-i', audioFile, '-map', '0:0', '-map', '1:0', '-vcodec', 'copy', '-acodec', acodec, final],
+                # use mkv to merge the video and audio
+                final = os.path.splitext(videoFile.replace('-video', ''))[0]+".mkv"
+                sp.run(['ffmpeg', '-i', videoFile, '-i', audioFile, '-map', '0:0', '-map', '1:0', '-vcodec', 'copy', '-acodec', 'copy', final],
                         stdout=sp.PIPE, stderr=sp.PIPE)
                 # remove the orignal files
                 os.remove(videoFile)
