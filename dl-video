@@ -98,11 +98,12 @@ def get_download_list_ted(url):
                 playlist = episode["playlist"]
             else:
                 playlist = ""
-            dllist.append({"dir":os.path.join(os.getcwd(), playlist.replace('/', '_').replace(':', '-')),
-                "out":episode["_filename"].replace('-'+episode["id"], ''), "url":episode["url"]})
+            # put subtitle before video
             if episode["requested_subtitles"]:
                 dllist.append({"dir":os.path.join(os.getcwd(), playlist.replace('/', '_').replace(':', '-')),
                     "out":os.path.splitext(episode["_filename"].replace('-'+episode["id"], ''))[0]+".srt", "url":episode["requested_subtitles"]["en"]["url"]})
+            dllist.append({"dir":os.path.join(os.getcwd(), playlist.replace('/', '_').replace(':', '-')),
+                "out":episode["_filename"].replace('-'+episode["id"], ''), "url":episode["url"]})
     return dllist
 
 def get_download_list_others(url):
@@ -180,25 +181,51 @@ def main(url, autonumber=False):
         print("congratulation: download finish!")
 
     if youtube:
-        for i in range(len(dllist)):
+        i = 0
+        while i < len(dllist):
             # each download has two parts, dash audio and dash video file
-            if i % 2 == 0:
-                audioFile = os.path.join(dllist[i]["dir"], dllist[i]["out"])
+            audioFile = os.path.join(dllist[i]["dir"], dllist[i]["out"])
+            videoFile = os.path.join(dllist[i+1]["dir"], dllist[i+1]["out"])
+            i = i + 2
+            # try to download the subtitle
+            srtFile = os.path.splitext(final)[0]+".srt"
+            try:
+                download_youtube_subtitle(dllist[i]["id"], srtFile)
+            except:
+                print("fail: http://keepvid.com/?url="+up.quote_plus("http://youtube.com/watch?v="+dllist[i]["id"])+"&mode=subs")
+            # use mkv to merge the video and audio
+            final = os.path.splitext(videoFile.replace('-video', ''))[0]+".mkv"
+            if os.path.exists(srtFile):
+                sp.run(['ffmpeg', '-i', videoFile, '-i', audioFile, '-i', srtFile, '-map', '0:0', '-map', '1:0', '-map', '2:0', 
+                    '-vcodec', 'copy', '-acodec', 'copy', '-scodec', 'copy', final], stdout=sp.PIPE, stderr=sp.PIPE)
             else:
-                videoFile = os.path.join(dllist[i]["dir"], dllist[i]["out"])
-                # use mkv to merge the video and audio
-                final = os.path.splitext(videoFile.replace('-video', ''))[0]+".mkv"
                 sp.run(['ffmpeg', '-i', videoFile, '-i', audioFile, '-map', '0:0', '-map', '1:0', '-vcodec', 'copy', '-acodec', 'copy', final],
                         stdout=sp.PIPE, stderr=sp.PIPE)
-                # remove the orignal files
+            # remove the orignal files
+            os.remove(videoFile)
+            os.remove(audioFile)
+            if os.path.exists(srtFile):
+                os.remove(srtFile)
+    elif ted:
+        i = 0
+        while i < len(dllist):
+            srtFile = ""
+            if os.path.splitext(dllist[i]["out"])[1] == ".srt":
+                srtFile = os.path.join(dllist[i]["dir"], dllist[i]["out"])
+                videoFile = os.path.join(dllist[i+1]["dir"], dllist[i+1]["out"])
+                i = i + 2
+            else:
+                videoFile = os.path.join(dllist[i]["dir"], dllist[i]["out"])
+                i = i + 1
+
+            if srtFile != "":
+                # use mkv to merge the video and srt
+                final = os.path.splitext(videoFile)[0]+".mkv"
+                sp.run(['ffmpeg', '-i', videoFile, '-i', srtFile, '-map', '0:0', '-map', '0:1', '-map', '1:0', 
+                    '-vcodec', 'copy', '-acodec', 'copy', '-scodec', 'copy', final], stdout=sp.PIPE, stderr=sp.PIPE)
                 os.remove(videoFile)
-                os.remove(audioFile)
-                # try to download the subtitle
-                try:
-                    download_youtube_subtitle(dllist[i]["id"], os.path.splitext(final)[0]+".srt")
-                except:
-                    print("fail: http://keepvid.com/?url="+up.quote_plus("http://youtube.com/watch?v="+dllist[i]["id"])+"&mode=subs")
-    elif not ted:
+                os.remove(srtFile)
+    else:
         if len(dllist) > 1:
             tmp = tempfile.mkstemp(suffix=".txt", dir=os.getcwd(), text=True)[1]
             with open(tmp, "w") as f:
