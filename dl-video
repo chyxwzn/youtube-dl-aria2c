@@ -187,6 +187,7 @@ def main(url, autonumber=False):
             audioFile = os.path.join(dllist[i]["dir"], dllist[i]["out"])
             videoFile = os.path.join(dllist[i+1]["dir"], dllist[i+1]["out"])
             i = i + 2
+            final = os.path.splitext(videoFile.replace('-video', ''))[0]+".mkv"
             # try to download the subtitle
             srtFile = os.path.splitext(final)[0]+".srt"
             try:
@@ -194,7 +195,6 @@ def main(url, autonumber=False):
             except:
                 print("fail: http://keepvid.com/?url="+up.quote_plus("http://youtube.com/watch?v="+dllist[i]["id"])+"&mode=subs")
             # use mkv to merge the video and audio
-            final = os.path.splitext(videoFile.replace('-video', ''))[0]+".mkv"
             if os.path.exists(srtFile):
                 sp.run(['ffmpeg', '-i', videoFile, '-i', audioFile, '-i', srtFile, '-map', '0:0', '-map', '1:0', '-map', '2:0', 
                     '-vcodec', 'copy', '-acodec', 'copy', '-scodec', 'copy', final], stdout=sp.PIPE, stderr=sp.PIPE)
