@@ -14,54 +14,61 @@ import time
 import tempfile
 import chardet
 
-def get_download_list_youtube(url, autonumber):
+def parse_youtube_json(content, autonumber):
     dllist = []
-    # with open("info.json", "rb") as f:
-    #     enc = chardet.detect(f.read(4096))["encoding"]
-    # with open("info.json", "r", encoding=enc.replace("LE","").replace("BE","")) as f:
-    #     info = f.read().split("\n")[:-1]
-    with sp.Popen(["youtube-dl", "-j", url], stdout=sp.PIPE) as proc:
-        # discard the last empty line
-        info = proc.stdout.read().decode("utf-8").split("\n")[:-1]
-        number = 0
-        for line in info:
-            episode = json.loads(line)
-            if episode["playlist"]:
-                playlist = episode["playlist"]
+    # discard the last empty line
+    info = content.split("\n")[:-1]
+    number = 0
+    for line in info:
+        episode = json.loads(line)
+        if episode["playlist"]:
+            playlist = episode["playlist"]
+        else:
+            playlist = ""
+        formats = episode["formats"]
+        index = 0
+        # the last dash audio has best quality
+        for fmt in formats:
+            if fmt["format_note"] == "DASH audio":
+                index += 1
             else:
-                playlist = ""
-            formats = episode["formats"]
-            index = 0
-            # the last dash audio has best quality
-            for fmt in formats:
-                if fmt["format_note"] == "DASH audio":
-                    index += 1
-                else:
-                    break
-            number += 1
-            if autonumber:
-                prefix = str(number)+" - "
-            else:
-                prefix = ""
-            basename = prefix + os.path.splitext(episode["_filename"])[0].replace('-'+episode["id"], '')
-            name = basename+"-audio."+formats[index - 1]["ext"]
-            # download the audio with best quality
-            dllist.append({"dir":os.path.join(os.getcwd(), playlist.replace('/', '_').replace(':', '-')),
-                "out":name, "url":formats[index - 1]["url"], "id":episode["id"]})
-            videoWidth = 0
-            videoSize = 0
-            for index in range(index, len(formats)):
-                if formats[index+1]["format_note"] != "DASH video" and int(formats[index]["width"]) == videoWidth and formats[index]["filesize"] > videoSize:
-                    break
-                elif formats[index]["format_note"] != "DASH video":
-                    break
-                videoWidth = int(formats[index]["width"])
-                videoSize = formats[index]["filesize"]
-            name = basename+"-video."+formats[index - 1]["ext"]
-            # download the video with best quality but least size
-            dllist.append({"dir":os.path.join(os.getcwd(), playlist.replace('/', '_').replace(':', '-')),
-                "out":name, "url":formats[index - 1]["url"], "id":episode["id"]})
+                break
+        number += 1
+        if autonumber:
+            prefix = str(number)+" - "
+        else:
+            prefix = ""
+        basename = prefix + os.path.splitext(episode["_filename"])[0].replace('-'+episode["id"], '')
+        name = basename+"-audio."+formats[index - 1]["ext"]
+        # download the audio with best quality
+        dllist.append({"dir":os.path.join(os.getcwd(), playlist.replace('/', '_').replace(':', '-')),
+            "out":name, "url":formats[index - 1]["url"], "id":episode["id"]})
+        videoWidth = 0
+        videoSize = 0
+        for index in range(index, len(formats)):
+            if formats[index+1]["format_note"] != "DASH video" and int(formats[index]["width"]) == videoWidth and formats[index]["filesize"] > videoSize:
+                break
+            elif formats[index]["format_note"] != "DASH video":
+                break
+            videoWidth = int(formats[index]["width"])
+            videoSize = formats[index]["filesize"]
+        name = basename+"-video."+formats[index - 1]["ext"]
+        # download the video with best quality but least size
+        dllist.append({"dir":os.path.join(os.getcwd(), playlist.replace('/', '_').replace(':', '-')),
+            "out":name, "url":formats[index - 1]["url"], "id":episode["id"]})
     return dllist
+
+def get_download_list_youtube(url, autonumber):
+    if os.path.exists("info.json"):
+        print("use exists json file")
+        with open("info.json", "r") as f:
+            content = f.read()
+    else:
+        with sp.Popen(["youtube-dl", "-j", url], stdout=sp.PIPE) as proc:
+            content = proc.stdout.read().decode("utf-8")
+            with open("info.json", "w") as f:
+                f.write(content)
+    return parse_youtube_json(content, autonumber)
 
 def download_youtube_subtitle(videoID, filename):
     keepVid = "http://keepvid.com/?url="+up.quote_plus("http://youtube.com/watch?v="+videoID)+"&mode=subs"
@@ -136,7 +143,6 @@ def get_download_list_others(url):
     return dllist, episode["title"]+'.'+episode["ext"]
 
 def aria2c_download(dllist):
-    fail = False
     with rpc.ServerProxy('http://localhost:6800/rpc') as s:
         mc = rpc.MultiCall(s)
         for download in dllist:
@@ -144,6 +150,8 @@ def aria2c_download(dllist):
         gids = list(mc()) #real execute, don't forget to call this
         print("waiting for download finish......")
 
+        errorCount = {}
+        failedCount = 0
         while True:
             mc = rpc.MultiCall(s)
             for gid in gids:
@@ -151,12 +159,16 @@ def aria2c_download(dllist):
             completed = 0
             for stat in mc():
                 if stat["status"] == "error":
-                    if stat["completedLength"] == 0:
-                        fail = True
+                    index = gids.index(stat["gid"])
+                    if index not in errorCount:
+                        errorCount[index] = 1
+                    else:
+                        errorCount[index] += 1
+                    if errorCount[index] > 5:
+                        failedCount += 1
                         print("can not download: "+dllist[index]["out"])
                         print(dllist[index]["url"])
-                        break
-                    index = gids.index(stat["gid"])
+                        continue
                     gids.remove(stat["gid"])
                     print("download again: " + dllist[index]["out"])
                     s.aria2.removeDownloadResult(stat["gid"])
@@ -164,99 +176,103 @@ def aria2c_download(dllist):
                     gids.insert(index, gid)
                 elif stat["status"] == "complete":
                     completed += 1
-            if fail or completed == len(gids):
+            if completed + failedCount == len(gids):
                 break
             else:
                 time.sleep(3)
-    return fail
+
+def merge_youtube(dllist):
+    i = 0
+    while i < len(dllist):
+        # each download has two parts, dash audio and dash video file
+        audioFile = os.path.join(dllist[i]["dir"], dllist[i]["out"])
+        videoFile = os.path.join(dllist[i+1]["dir"], dllist[i+1]["out"])
+        if not os.path.exists(audioFile) or not os.path.exists(videoFile):
+            i = i + 2
+            continue
+        final = os.path.splitext(videoFile.replace('-video', ''))[0]+".mkv"
+        # try to download the subtitle
+        srtFile = os.path.splitext(final)[0]+".srt"
+        try:
+            download_youtube_subtitle(dllist[i]["id"], srtFile)
+        except:
+            print("fail: http://keepvid.com/?url="+up.quote_plus("http://youtube.com/watch?v="+dllist[i]["id"])+"&mode=subs")
+        i = i + 2
+        # use mkv to merge the video and audio
+        if os.path.exists(srtFile):
+            sp.run(['ffmpeg', '-i', videoFile, '-i', audioFile, '-i', srtFile, '-map', '0:0', '-map', '1:0', '-map', '2:0', 
+                '-vcodec', 'copy', '-acodec', 'copy', '-scodec', 'copy', final], stdout=sp.PIPE, stderr=sp.PIPE)
+        else:
+            sp.run(['ffmpeg', '-i', videoFile, '-i', audioFile, '-map', '0:0', '-map', '1:0', '-vcodec', 'copy', '-acodec', 'copy', final],
+                    stdout=sp.PIPE, stderr=sp.PIPE)
+        # remove the orignal files
+        os.remove(videoFile)
+        os.remove(audioFile)
+        if os.path.exists(srtFile):
+            os.remove(srtFile)
+        print("final file:" + final)
+
+def merge_ted(dllist):
+    i = 0
+    while i < len(dllist):
+        srtFile = ""
+        if os.path.splitext(dllist[i]["out"])[1] == ".srt":
+            srtFile = os.path.join(dllist[i]["dir"], dllist[i]["out"])
+            videoFile = os.path.join(dllist[i+1]["dir"], dllist[i+1]["out"])
+            i = i + 2
+        else:
+            videoFile = os.path.join(dllist[i]["dir"], dllist[i]["out"])
+            i = i + 1
+
+        if not os.path.exists(videoFile):
+            continue
+        if srtFile != "":
+            # use mkv to merge the video and srt
+            final = os.path.splitext(videoFile)[0]+".mkv"
+            sp.run(['ffmpeg', '-i', videoFile, '-i', srtFile, '-map', '0:0', '-map', '0:1', '-map', '1:0', 
+                '-vcodec', 'copy', '-acodec', 'copy', '-scodec', 'copy', final], stdout=sp.PIPE, stderr=sp.PIPE)
+            os.remove(videoFile)
+            os.remove(srtFile)
+            print("final file:" + final)
+
+def merge_others(dllist, final):
+    if len(dllist) > 1:
+        tmp = tempfile.mkstemp(suffix=".txt", dir=os.getcwd(), text=True)[1]
+        with open(tmp, "w") as f:
+            for download in dllist:
+                f.write("file '"+download["out"]+"'\n")
+        # refer to https://trac.ffmpeg.org/wiki/Concatenate
+        sp.run(['ffmpeg', '-f', 'concat', '-i', tmp, '-c', 'copy', final], stdout=sp.PIPE, stderr=sp.PIPE)
+        os.remove(tmp)
+        for download in dllist:
+            os.remove(download["out"])
+    else:
+        if os.path.exists(dllist[0]["out"]):
+            os.rename(dllist[0]["out"], final)
+    # movist doesn't support f4v, convert to mp4, just change the file format, it's fast
+    if sys.platform == "darwin" and os.path.splitext(final)[1] == ".f4v" and os.path.exists(final):
+        sp.run(['ffmpeg', '-i', final, '-vcodec', 'copy', '-acodec', 'copy', os.path.splitext(final)[0]+".mp4"], stdout=sp.PIPE, stderr=sp.PIPE)
+        os.remove(final)
+    print("final file:" + final)
 
 def download_video(url, autonumber=False):
-    youtube = False
-    ted = False
     if "youtube" in url:
-        youtube = True
         dllist = get_download_list_youtube(url, autonumber)
+        # for remedy
+        # autonumber_downloaded(dllist)
     elif "ted.com" in url:
-        ted = True
         dllist = get_download_list_ted(url)
     else:
-        dllist, final = get_download_list_others(url)
+        dllist, others_final = get_download_list_others(url)
 
-    # for remedy
-    # autonumber_downloaded(dllist)
-    # fail = True
-    # fail = False
+    aria2c_download(dllist)
 
-    fail = aria2c_download(dllist)
-    if fail:
-        sys.exit("download fail!")
+    if "youtube" in url:
+        merge_youtube(dllist)
+    elif "ted.com" in url:
+        merge_ted(dllist)
     else:
-        print("congratulation: download finish!")
-
-    if youtube:
-        i = 0
-        while i < len(dllist):
-            # each download has two parts, dash audio and dash video file
-            audioFile = os.path.join(dllist[i]["dir"], dllist[i]["out"])
-            videoFile = os.path.join(dllist[i+1]["dir"], dllist[i+1]["out"])
-            final = os.path.splitext(videoFile.replace('-video', ''))[0]+".mkv"
-            # try to download the subtitle
-            srtFile = os.path.splitext(final)[0]+".srt"
-            try:
-                download_youtube_subtitle(dllist[i]["id"], srtFile)
-            except:
-                print("fail: http://keepvid.com/?url="+up.quote_plus("http://youtube.com/watch?v="+dllist[i]["id"])+"&mode=subs")
-            i = i + 2
-            # use mkv to merge the video and audio
-            if os.path.exists(srtFile):
-                sp.run(['ffmpeg', '-i', videoFile, '-i', audioFile, '-i', srtFile, '-map', '0:0', '-map', '1:0', '-map', '2:0', 
-                    '-vcodec', 'copy', '-acodec', 'copy', '-scodec', 'copy', final], stdout=sp.PIPE, stderr=sp.PIPE)
-            else:
-                sp.run(['ffmpeg', '-i', videoFile, '-i', audioFile, '-map', '0:0', '-map', '1:0', '-vcodec', 'copy', '-acodec', 'copy', final],
-                        stdout=sp.PIPE, stderr=sp.PIPE)
-            # remove the orignal files
-            os.remove(videoFile)
-            os.remove(audioFile)
-            if os.path.exists(srtFile):
-                os.remove(srtFile)
-    elif ted:
-        i = 0
-        while i < len(dllist):
-            srtFile = ""
-            if os.path.splitext(dllist[i]["out"])[1] == ".srt":
-                srtFile = os.path.join(dllist[i]["dir"], dllist[i]["out"])
-                videoFile = os.path.join(dllist[i+1]["dir"], dllist[i+1]["out"])
-                i = i + 2
-            else:
-                videoFile = os.path.join(dllist[i]["dir"], dllist[i]["out"])
-                i = i + 1
-
-            if srtFile != "":
-                # use mkv to merge the video and srt
-                final = os.path.splitext(videoFile)[0]+".mkv"
-                sp.run(['ffmpeg', '-i', videoFile, '-i', srtFile, '-map', '0:0', '-map', '0:1', '-map', '1:0', 
-                    '-vcodec', 'copy', '-acodec', 'copy', '-scodec', 'copy', final], stdout=sp.PIPE, stderr=sp.PIPE)
-                os.remove(videoFile)
-                os.remove(srtFile)
-    else:
-        if len(dllist) > 1:
-            tmp = tempfile.mkstemp(suffix=".txt", dir=os.getcwd(), text=True)[1]
-            with open(tmp, "w") as f:
-                for download in dllist:
-                    f.write("file '"+download["out"]+"'\n")
-            # refer to https://trac.ffmpeg.org/wiki/Concatenate
-            sp.run(['ffmpeg', '-f', 'concat', '-i', tmp, '-c', 'copy', final], stdout=sp.PIPE, stderr=sp.PIPE)
-            os.remove(tmp)
-            for download in dllist:
-                os.remove(download["out"])
-        else:
-            if os.path.exists(dllist[0]["out"]):
-                os.rename(dllist[0]["out"], final)
-        # movist doesn't support f4v, convert to mp4, just change the file format, it's fast
-        if sys.platform == "darwin" and os.path.splitext(final)[1] == ".f4v" and os.path.exists(final):
-            sp.run(['ffmpeg', '-i', final, '-vcodec', 'copy', '-acodec', 'copy', os.path.splitext(final)[0]+".mp4"], stdout=sp.PIPE, stderr=sp.PIPE)
-            os.remove(final)
-        print("final file:" + final)
+        merge_others(dllist, others_final)
 
 def bundle_download(listFile):
     with open(listFile, "r") as f:
