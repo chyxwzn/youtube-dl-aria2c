@@ -13,6 +13,7 @@ import json
 import time
 import tempfile
 import chardet
+import io
 
 def parse_youtube_json(content, autonumber):
     dllist = []
@@ -43,19 +44,16 @@ def parse_youtube_json(content, autonumber):
         # download the audio with best quality
         dllist.append({"dir":os.path.join(os.getcwd(), playlist.replace('/', '_').replace(':', '-')),
             "out":name, "url":formats[index - 1]["url"], "id":episode["id"]})
-        videoWidth = 0
-        videoSize = 0
         for index in range(index, len(formats)):
-            if formats[index+1]["format_note"] != "DASH video" and int(formats[index]["width"]) == videoWidth and formats[index]["filesize"] > videoSize:
+            if formats[index]["acodec"] == "none":
+                print("index: "+str(index)+", format: "+formats[index]["format"]+", size: "+str(formats[index]["filesize"]))
+            else:
                 break
-            elif formats[index]["format_note"] != "DASH video":
-                break
-            videoWidth = int(formats[index]["width"])
-            videoSize = formats[index]["filesize"]
-        name = basename+"-video."+formats[index - 1]["ext"]
+        index = int(input("select index:"))
+        name = basename+"-video."+formats[index]["ext"]
         # download the video with best quality but least size
         dllist.append({"dir":os.path.join(os.getcwd(), playlist.replace('/', '_').replace(':', '-')),
-            "out":name, "url":formats[index - 1]["url"], "id":episode["id"]})
+            "out":name, "url":formats[index]["url"], "id":episode["id"]})
     return dllist
 
 def get_download_list_youtube(url, autonumber):
@@ -71,27 +69,19 @@ def get_download_list_youtube(url, autonumber):
     return parse_youtube_json(content, autonumber)
 
 def download_youtube_subtitle(videoID, filename):
-    keepVid = "http://keepvid.com/?url="+up.quote_plus("http://youtube.com/watch?v="+videoID)+"&mode=subs"
+    keepVid = "http://keepvid.com/?url="+up.quote_plus("http://youtube.com/watch?v="+videoID)+"&mode=subs&ratebypass=yes"
+    # keepVid = "file:///C:/Users/mtk11185/test.html"
     with request.urlopen(keepVid) as html:
+        with io.open("test2.html", "w", encoding='utf-8') as f:
+            f.write(html.read().decode("utf-8"))
+            return
         soup = BeautifulSoup(html.read().decode("utf-8"), 'html.parser')
-        dl = soup.find(id="dl")
-        subs = dl.find_all("b", recursive=False)
-        hrefs = dl.find_all("a", recursive=False)
-        # first try to download the original subtitle, generated subtitle is the last choice
-        for i in range(len(subs)):
-            if subs[i].string == "English":
-                find = i
-                break
-        if "find" not in locals():
-            for i in range(len(subs)):
-                if subs[i].string == "English (Automatic Captions)":
-                    find = i
-                    break
-        if "find" in locals():
-            with request.urlopen(hrefs[find]['href']) as html:
-                with open(filename, "w") as f:
-                    f.write(html.read().decode("utf-8"))
-                    print("downloaded sub: "+filename)
+        lastColumn = soup.find("table").find("tbody").find_all("tr")[0].find_all('td', recursive=False)[3]
+        href = lastColumn.find("a", recursive=False)
+        with request.urlopen(href['href']) as html:
+            with open(filename, "w") as f:
+                f.write(html.read().decode("utf-8"))
+                print("downloaded sub: "+filename)
 
 def autonumber_downloaded(dllist):
     number = 0
@@ -196,7 +186,7 @@ def merge_youtube(dllist):
         try:
             download_youtube_subtitle(dllist[i]["id"], srtFile)
         except:
-            print("fail: http://keepvid.com/?url="+up.quote_plus("http://youtube.com/watch?v="+dllist[i]["id"])+"&mode=subs")
+            print("fail: http://keepvid.com/?url="+up.quote_plus("http://youtube.com/watch?v="+dllist[i]["id"])+"&mode=subs&ratebypass=yes")
         i = i + 2
         # use mkv to merge the video and audio
         if os.path.exists(srtFile):
@@ -265,6 +255,9 @@ def download_video(url, autonumber=False):
     else:
         dllist, others_final = get_download_list_others(url)
 
+    srtFile = "a.srt"
+    download_youtube_subtitle(dllist[0]["id"], srtFile)
+    sys.exit("exit")
     aria2c_download(dllist)
 
     if "youtube" in url:
