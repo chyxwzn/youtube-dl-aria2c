@@ -15,8 +15,10 @@ import tempfile
 import chardet
 import io
 
-def parse_youtube_json(content, autonumber):
-    dllist = []
+autonumber = False
+dllist = []
+
+def parse_youtube_json(content):
     # discard the last empty line
     info = content.split("\n")[:-1]
     number = 0
@@ -51,12 +53,11 @@ def parse_youtube_json(content, autonumber):
                 break
         index = int(input("select index:"))
         name = basename+"-video."+formats[index]["ext"]
-        # download the video with best quality but least size
         dllist.append({"dir":os.path.join(os.getcwd(), playlist.replace('/', '_').replace(':', '-')),
             "out":name, "url":formats[index]["url"], "id":episode["id"]})
-    return dllist
+        # print("url:"+formats[index]["url"])
 
-def get_download_list_youtube(url, autonumber):
+def get_download_list_youtube(url):
     if os.path.exists("info.json"):
         print("use exists json file")
         with open("info.json", "r") as f:
@@ -64,26 +65,11 @@ def get_download_list_youtube(url, autonumber):
     else:
         with sp.Popen(["youtube-dl", "-j", url], stdout=sp.PIPE) as proc:
             content = proc.stdout.read().decode("utf-8")
-            with open("info.json", "w") as f:
-                f.write(content)
-    return parse_youtube_json(content, autonumber)
+            # with open("info.json", "w") as f:
+            #     f.write(content)
+    return parse_youtube_json(content)
 
-def download_youtube_subtitle(videoID, filename):
-    keepVid = "http://keepvid.com/?url="+up.quote_plus("http://youtube.com/watch?v="+videoID)+"&mode=subs&ratebypass=yes"
-    # keepVid = "file:///C:/Users/mtk11185/test.html"
-    with request.urlopen(keepVid) as html:
-        with io.open("test2.html", "w", encoding='utf-8') as f:
-            f.write(html.read().decode("utf-8"))
-            return
-        soup = BeautifulSoup(html.read().decode("utf-8"), 'html.parser')
-        lastColumn = soup.find("table").find("tbody").find_all("tr")[0].find_all('td', recursive=False)[3]
-        href = lastColumn.find("a", recursive=False)
-        with request.urlopen(href['href']) as html:
-            with open(filename, "w") as f:
-                f.write(html.read().decode("utf-8"))
-                print("downloaded sub: "+filename)
-
-def autonumber_downloaded(dllist):
+def autonumber_downloaded():
     number = 0
     for i in range(len(dllist)):
         # each download has two parts, dash audio and dash video file
@@ -94,7 +80,6 @@ def autonumber_downloaded(dllist):
             os.rename(filename, str(number)+" - "+filename)
 
 def get_download_list_ted(url):
-    dllist = []
     # with open("info.json", "rb") as f:
     #     enc = chardet.detect(f.read(4096))["encoding"]
     # with open("info.json", "r", encoding=enc.replace("LE","").replace("BE","")) as f:
@@ -114,10 +99,8 @@ def get_download_list_ted(url):
                     "out":os.path.splitext(episode["_filename"].replace('-'+episode["id"], ''))[0]+".srt", "url":episode["requested_subtitles"]["en"]["url"]})
             dllist.append({"dir":os.path.join(os.getcwd(), playlist.replace('/', '_').replace(':', '-')),
                 "out":episode["_filename"].replace('-'+episode["id"], ''), "url":episode["url"]})
-    return dllist
 
 def get_download_list_others(url):
-    dllist = []
     with sp.Popen(["youtube-dl", "-j", url], stdout=sp.PIPE) as proc:
         # discard the last empty line
         info = proc.stdout.read().decode("utf-8").split("\n")[:-1]
@@ -130,9 +113,9 @@ def get_download_list_others(url):
         sys.exit("url not supported")
     # assume that even if there are several parts, they belong to one file 
     # after download finish, we will concatenate them.
-    return dllist, episode["title"]+'.'+episode["ext"]
+    return episode["title"]+'.'+episode["ext"]
 
-def aria2c_download(dllist):
+def aria2c_download():
     with rpc.ServerProxy('http://localhost:6800/rpc') as s:
         mc = rpc.MultiCall(s)
         for download in dllist:
@@ -171,7 +154,7 @@ def aria2c_download(dllist):
             else:
                 time.sleep(3)
 
-def merge_youtube(dllist):
+def merge_youtube():
     i = 0
     while i < len(dllist):
         # each download has two parts, dash audio and dash video file
@@ -181,28 +164,16 @@ def merge_youtube(dllist):
             i = i + 2
             continue
         final = os.path.splitext(videoFile.replace('-video', ''))[0]+".mkv"
-        # try to download the subtitle
-        srtFile = os.path.splitext(final)[0]+".srt"
-        try:
-            download_youtube_subtitle(dllist[i]["id"], srtFile)
-        except:
-            print("fail: http://keepvid.com/?url="+up.quote_plus("http://youtube.com/watch?v="+dllist[i]["id"])+"&mode=subs&ratebypass=yes")
         i = i + 2
         # use mkv to merge the video and audio
-        if os.path.exists(srtFile):
-            sp.run(['ffmpeg', '-i', videoFile, '-i', audioFile, '-i', srtFile, '-map', '0:0', '-map', '1:0', '-map', '2:0', 
-                '-vcodec', 'copy', '-acodec', 'copy', '-scodec', 'copy', final], stdout=sp.PIPE, stderr=sp.PIPE)
-        else:
-            sp.run(['ffmpeg', '-i', videoFile, '-i', audioFile, '-map', '0:0', '-map', '1:0', '-vcodec', 'copy', '-acodec', 'copy', final],
-                    stdout=sp.PIPE, stderr=sp.PIPE)
+        sp.run(['ffmpeg', '-i', videoFile, '-i', audioFile, '-map', '0:0', '-map', '1:0', '-vcodec', 'copy', '-acodec', 'copy', final],
+                stdout=sp.PIPE, stderr=sp.PIPE)
         # remove the orignal files
         os.remove(videoFile)
         os.remove(audioFile)
-        if os.path.exists(srtFile):
-            os.remove(srtFile)
         print("final file:" + final)
 
-def merge_ted(dllist):
+def merge_ted():
     i = 0
     while i < len(dllist):
         srtFile = ""
@@ -225,7 +196,7 @@ def merge_ted(dllist):
             os.remove(srtFile)
             print("final file:" + final)
 
-def merge_others(dllist, final):
+def merge_others(final):
     if len(dllist) > 1:
         tmp = tempfile.mkstemp(suffix=".txt", dir=os.getcwd(), text=True)[1]
         with open(tmp, "w") as f:
@@ -245,27 +216,25 @@ def merge_others(dllist, final):
         os.remove(final)
     print("final file:" + final)
 
-def download_video(url, autonumber=False):
+def download_video(url):
     if "youtube" in url:
-        dllist = get_download_list_youtube(url, autonumber)
+        get_download_list_youtube(url)
         # for remedy
-        # autonumber_downloaded(dllist)
+        # autonumber_downloaded()
     elif "ted.com" in url:
-        dllist = get_download_list_ted(url)
+        get_download_list_ted(url)
     else:
-        dllist, others_final = get_download_list_others(url)
+        others_final = get_download_list_others(url)
 
-    srtFile = "a.srt"
-    download_youtube_subtitle(dllist[0]["id"], srtFile)
-    sys.exit("exit")
-    aria2c_download(dllist)
+    # sys.exit("exit")
+    aria2c_download()
 
     if "youtube" in url:
-        merge_youtube(dllist)
+        merge_youtube()
     elif "ted.com" in url:
-        merge_ted(dllist)
+        merge_ted()
     else:
-        merge_others(dllist, others_final)
+        merge_others(others_final)
 
 def bundle_download(listFile):
     with open(listFile, "r") as f:
@@ -277,7 +246,8 @@ if __name__ == "__main__":
     if len(sys.argv) < 2:
         sys.exit("Error: there's no download url")
     elif len(sys.argv) == 3 and sys.argv[1] == "-an":
-        download_video(sys.argv[2], autonumber=True)
+        autonumber=True
+        download_video(sys.argv[2])
     elif len(sys.argv) == 3 and sys.argv[1] == "-f":
         bundle_download(sys.argv[2])
     else:
