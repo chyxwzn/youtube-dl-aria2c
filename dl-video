@@ -16,6 +16,7 @@ import chardet
 import io
 
 autonumber = False
+best = False
 dllist = []
 
 def parse_youtube_json(content):
@@ -46,12 +47,15 @@ def parse_youtube_json(content):
         # download the audio with best quality
         dllist.append({"dir":os.path.join(os.getcwd(), playlist.replace('/', '_').replace(':', '-')),
             "out":name, "url":formats[index - 1]["url"], "id":episode["id"]})
-        for index in range(index, len(formats)):
-            if formats[index]["acodec"] == "none":
-                print("index: "+str(index)+", format: "+formats[index]["format"]+", size: "+str(formats[index]["filesize"]))
-            else:
-                break
-        index = int(input("select index:"))
+        if best:
+            index = len(formats) - 1
+        else:
+            for index in range(index, len(formats)):
+                if formats[index]["acodec"] == "none":
+                    print("index: "+str(index)+", format: "+formats[index]["format"]+", size: "+str(formats[index]["filesize"]))
+                else:
+                    break
+            index = int(input("select index:"))
         name = basename+"-video."+formats[index]["ext"]
         dllist.append({"dir":os.path.join(os.getcwd(), playlist.replace('/', '_').replace(':', '-')),
             "out":name, "url":formats[index]["url"], "id":episode["id"]})
@@ -119,7 +123,7 @@ def aria2c_download():
     with rpc.ServerProxy('http://localhost:6800/rpc') as s:
         mc = rpc.MultiCall(s)
         for download in dllist:
-            mc.aria2.addUri([download["url"]], {"dir":download["dir"], "out":download["out"]})
+            mc.aria2.addUri([download["url"]], {"dir":download["dir"], "out":download["out"], "all-proxy":"http://127.0.0.1:1087"})
         gids = list(mc()) #real execute, don't forget to call this
         print("waiting for download finish......")
 
@@ -166,7 +170,7 @@ def merge_youtube():
         final = os.path.splitext(videoFile.replace('-video', ''))[0]+".mkv"
         i = i + 2
         # use mkv to merge the video and audio
-        sp.run(['ffmpeg', '-i', videoFile, '-i', audioFile, '-map', '0:0', '-map', '1:0', '-vcodec', 'copy', '-acodec', 'copy', final],
+        sp.run(['ffmpeg', '-y', '-i', videoFile, '-i', audioFile, '-map', '0:0', '-map', '1:0', '-vcodec', 'copy', '-acodec', 'copy', final],
                 stdout=sp.PIPE, stderr=sp.PIPE)
         # remove the orignal files
         os.remove(videoFile)
@@ -190,7 +194,7 @@ def merge_ted():
         if srtFile != "":
             # use mkv to merge the video and srt
             final = os.path.splitext(videoFile)[0]+".mkv"
-            sp.run(['ffmpeg', '-i', videoFile, '-i', srtFile, '-map', '0:0', '-map', '0:1', '-map', '1:0', 
+            sp.run(['ffmpeg', '-y', '-i', videoFile, '-i', srtFile, '-map', '0:0', '-map', '0:1', '-map', '1:0', 
                 '-vcodec', 'copy', '-acodec', 'copy', '-scodec', 'copy', final], stdout=sp.PIPE, stderr=sp.PIPE)
             os.remove(videoFile)
             os.remove(srtFile)
@@ -203,7 +207,7 @@ def merge_others(final):
             for download in dllist:
                 f.write("file '"+download["out"]+"'\n")
         # refer to https://trac.ffmpeg.org/wiki/Concatenate
-        sp.run(['ffmpeg', '-f', 'concat', '-i', tmp, '-c', 'copy', final], stdout=sp.PIPE, stderr=sp.PIPE)
+        sp.run(['ffmpeg', '-y', '-f', 'concat', '-i', tmp, '-c', 'copy', final], stdout=sp.PIPE, stderr=sp.PIPE)
         os.remove(tmp)
         for download in dllist:
             os.remove(download["out"])
@@ -212,7 +216,7 @@ def merge_others(final):
             os.rename(dllist[0]["out"], final)
     # movist doesn't support f4v, convert to mp4, just change the file format, it's fast
     if sys.platform == "darwin" and os.path.splitext(final)[1] == ".f4v" and os.path.exists(final):
-        sp.run(['ffmpeg', '-i', final, '-vcodec', 'copy', '-acodec', 'copy', os.path.splitext(final)[0]+".mp4"], stdout=sp.PIPE, stderr=sp.PIPE)
+        sp.run(['ffmpeg', '-y', '-i', final, '-vcodec', 'copy', '-acodec', 'copy', os.path.splitext(final)[0]+".mp4"], stdout=sp.PIPE, stderr=sp.PIPE)
         os.remove(final)
     print("final file:" + final)
 
@@ -239,6 +243,9 @@ def download_video(url):
 def bundle_download(listFile):
     with open(listFile, "r") as f:
         urls = f.readlines()
+        # for url in urls:
+        #     print(url)
+        #     download_video(url)
         with Pool(5) as p:
             p.map(download_video, urls)
 
@@ -246,9 +253,10 @@ if __name__ == "__main__":
     if len(sys.argv) < 2:
         sys.exit("Error: there's no download url")
     elif len(sys.argv) == 3 and sys.argv[1] == "-an":
-        autonumber=True
+        autonumber = True
         download_video(sys.argv[2])
     elif len(sys.argv) == 3 and sys.argv[1] == "-f":
+        best = True
         bundle_download(sys.argv[2])
     else:
         download_video(sys.argv[1])
