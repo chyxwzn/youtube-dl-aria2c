@@ -14,8 +14,9 @@ import time
 import tempfile
 import chardet
 import io
+import argparse
 
-autonumber = False
+auto_number = False
 best = False
 dllist = []
 
@@ -38,7 +39,7 @@ def parse_youtube_json(content):
             else:
                 break
         number += 1
-        if autonumber:
+        if auto_number:
             prefix = str(number)+" - "
         else:
             prefix = ""
@@ -50,9 +51,10 @@ def parse_youtube_json(content):
         if best:
             index = len(formats) - 1
         else:
+            print(basename)
             for index in range(index, len(formats)):
                 if formats[index]["acodec"] == "none":
-                    print("index: {:<2}, vcodec: {:<11}, format: {:<23}, size: {:<10}".format(str(index), formats[index]["vcodec"], formats[index]["format"], str(formats[index]["filesize"])))
+                    print("index: {:<2}, vcodec: {:<11}, format: {:<23}, size: {:<11}".format(str(index), formats[index]["vcodec"], formats[index]["format"], str(formats[index]["filesize"])))
                 else:
                     break
             index = int(input("select index:"))
@@ -270,14 +272,48 @@ def bundle_download(listFile):
         with Pool(5) as p:
             p.map(download_video, urls)
 
-if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        sys.exit("Error: there's no download url")
-    elif len(sys.argv) == 3 and sys.argv[1] == "-an":
-        autonumber = True
-        download_video(sys.argv[2])
-    elif len(sys.argv) == 3 and sys.argv[1] == "-f":
+def main():
+    arg_parser = argparse.ArgumentParser(
+        prog='dl-video',
+        epilog='dl-video',
+        description='download video easily',
+        formatter_class=argparse.RawTextHelpFormatter
+    )
+    arg_parser.add_argument(
+        'url',
+        help="the video's url"
+    )
+    arg_parser.add_argument(
+        '-an',
+        '--auto_number',
+        action='store_true',
+        help='auto increase number'
+    )
+    arg_parser.add_argument(
+        '-b',
+        '--best',
+        action='store_true',
+        help='choose best video quality'
+    )
+    arg_parser.add_argument(
+        '-f',
+        '--file_input',
+        action='store_true',
+        help='file contains the video urls'
+    )
+
+    args = arg_parser.parse_args()
+    if args.auto_number:
+        auto_number = args.auto_number
+        download_video(args.url)
+    elif args.best:
         best = True
-        bundle_download(sys.argv[2])
+        download_video(args.url)
+    elif args.file_input:
+        best = True
+        bundle_download(args.url)
     else:
-        download_video(sys.argv[1])
+        download_video(args.url)
+
+if __name__ == "__main__":
+    main()
