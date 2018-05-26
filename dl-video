@@ -21,6 +21,7 @@ best = False
 dllist = []
 
 def parse_youtube_json(content):
+    global dllist
     # discard the last empty line
     info = content.split("\n")[:-1]
     number = 0
@@ -49,7 +50,10 @@ def parse_youtube_json(content):
         dllist.append({"dir":os.path.join(os.getcwd(), playlist.replace('/', '_').replace(':', '-')),
             "out":name, "url":formats[index - 1]["url"], "id":episode["id"]})
         if best:
-            index = len(formats) - 1
+            for index in reversed(range(index, len(formats))):
+                if formats[index]["acodec"] == "none" and formats[index]["vcodec"] != "vp9":
+                    break
+            print("index: {:<2}, vcodec: {:<11}, format: {:<23}, size: {:<11}".format(str(index), formats[index]["vcodec"], formats[index]["format"], str(formats[index]["filesize"])))
         else:
             print(basename)
             for index in range(index, len(formats)):
@@ -86,6 +90,7 @@ def autonumber_downloaded():
             os.rename(filename, str(number)+" - "+filename)
 
 def get_download_list_ted(url):
+    global dllist
     # with open("info.json", "rb") as f:
     #     enc = chardet.detect(f.read(4096))["encoding"]
     # with open("info.json", "r", encoding=enc.replace("LE","").replace("BE","")) as f:
@@ -108,6 +113,7 @@ def get_download_list_ted(url):
             # print("url: " + episode["url"])
 
 def get_download_list_others(url):
+    global dllist
     with sp.Popen(["youtube-dl", "-j", url], stdout=sp.PIPE) as proc:
         # discard the last empty line
         info = proc.stdout.read().decode("utf-8").split("\n")[:-1]
@@ -244,7 +250,8 @@ def merge_others(final):
     print("final file:" + final)
 
 def download_video(url):
-    if "youtube" in url:
+    #youtube.com or youtu.be
+    if "youtu" in url:
         get_download_list_youtube(url)
         # for remedy
         # autonumber_downloaded()
@@ -256,7 +263,7 @@ def download_video(url):
     # sys.exit("exit")
     aria2c_download()
 
-    if "youtube" in url:
+    if "youtu" in url:
         merge_youtube()
     elif "ted.com" in url:
         merge_ted()
@@ -273,6 +280,8 @@ def bundle_download(listFile):
             p.map(download_video, urls)
 
 def main():
+    global auto_number
+    global best
     arg_parser = argparse.ArgumentParser(
         prog='dl-video',
         epilog='dl-video',
