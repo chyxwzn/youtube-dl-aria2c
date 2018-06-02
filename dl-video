@@ -134,9 +134,9 @@ def aria2c_download():
         for download in dllist:
             mc.aria2.addUri([download["url"]], {"dir":download["dir"], "out":download["out"], "split":"20"})
             # mc.aria2.addUri([download["url"]], {"dir":download["dir"], "out":download["out"], "all-proxy":"http://127.0.0.1:1087"})
+            aria2c_download.dlcnt = aria2c_download.dlcnt + 1
+            print(str(aria2c_download.dlcnt) + ". downloading " + download["out"])
         gids = list(mc()) #real execute, don't forget to call this
-        aria2c_download.dlcnt = aria2c_download.dlcnt + 1
-        print(str(aria2c_download.dlcnt) + ". downloading " + download["out"])
 
         errorCount = {}
         failedCount = 0
