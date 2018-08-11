@@ -15,273 +15,311 @@ import tempfile
 import chardet
 import io
 import argparse
+from abc import ABC, abstractmethod
+from functools import partial
 
-auto_number = False
-best = False
-dllist = []
+class BaseDownloader(ABC):
 
-def parse_youtube_json(content):
-    global dllist
-    # discard the last empty line
-    info = content.split("\n")[:-1]
-    number = 0
-    for line in info:
-        episode = json.loads(line)
-        if episode["playlist"]:
-            playlist = episode["playlist"]
+    @abstractmethod
+    def get_download_list(self):
+        pass
+
+    @abstractmethod
+    def merge_channels(self):
+        pass
+
+class YoutubeDownloader(BaseDownloader):
+
+    def __init__(self, args, url):
+        self.url = url
+        self.choose_best = args.best
+        self.video_idx = args.index
+        self.auto_number = args.auto_number
+        self.subtitle = args.subtitle
+        self.dllist = []
+
+    def get_download_list(self):
+        if os.path.exists("info.json"):
+            print("use exists json file")
+            with open("info.json", "r") as f:
+                content = f.read()
         else:
-            playlist = ""
-        formats = episode["formats"]
-        index = 0
-        # the last dash audio has best quality
-        for fmt in formats:
-            if fmt["format_note"] == "DASH audio":
-                index += 1
+            with sp.Popen(["youtube-dl", "-j", self.url], stdout=sp.PIPE) as proc:
+                content = proc.stdout.read().decode("utf-8")
+                with open("info.json", "w") as f:
+                    f.write(content)
+        self.parse_json(content)
+        return self.dllist
+
+    def merge_channels(self):
+        i = 0
+        while i < len(self.dllist):
+            # each download has two parts, dash audio and dash video file
+            audioFile = os.path.join(self.dllist[i]["dir"], self.dllist[i]["out"])
+            videoFile = os.path.join(self.dllist[i+1]["dir"], self.dllist[i+1]["out"])
+            if not os.path.exists(audioFile) or not os.path.exists(videoFile):
+                i = i + 2
+                continue
+            final = os.path.splitext(videoFile.replace('-video', ''))[0]+".mkv"
+            i = i + 2
+            # use mkv to merge the video and audio
+            result = sp.run(['ffmpeg', '-y', '-i', videoFile, '-i', audioFile, '-map', '0:0', '-map', '1:0', '-vcodec', 'copy', '-acodec', 'copy', final],
+                    stdout=sp.PIPE, stderr=sp.PIPE)
+            if result.returncode == 0:
+                # remove the orignal files
+                os.remove(videoFile)
+                os.remove(audioFile)
+                print("final file:" + final)
             else:
-                break
-        number += 1
-        if auto_number:
-            prefix = str(number)+" - "
-        else:
-            prefix = ""
-        basename = prefix + os.path.splitext(episode["_filename"])[0].replace('-'+episode["id"], '')
-        name = basename+"-audio."+formats[index - 1]["ext"]
-        # download the audio with best quality
-        dllist.append({"dir":os.path.join(os.getcwd(), playlist.replace('/', '_').replace(':', '-')),
-            "out":name, "url":formats[index - 1]["url"], "id":episode["id"]})
-        if best:
-            for index in reversed(range(index, len(formats))):
-                if formats[index]["acodec"] == "none" and formats[index]["vcodec"] != "vp9":
-                    break
-            print("index: {:<2}, vcodec: {:<11}, format: {:<23}, size: {:<11}".format(str(index), formats[index]["vcodec"], formats[index]["format"], str(formats[index]["filesize"])))
-        else:
-            print(basename)
-            for index in range(index, len(formats)):
-                if formats[index]["acodec"] == "none":
-                    print("index: {:<2}, vcodec: {:<11}, format: {:<23}, size: {:<11}".format(str(index), formats[index]["vcodec"], formats[index]["format"], str(formats[index]["filesize"])))
-                else:
-                    break
-            index = int(input("select index:"))
-        name = basename+"-video."+formats[index]["ext"]
-        dllist.append({"dir":os.path.join(os.getcwd(), playlist.replace('/', '_').replace(':', '-')),
-            "out":name, "url":formats[index]["url"], "id":episode["id"]})
-        # print("url:"+formats[index]["url"])
+                print("failed to merge video: " + final)
+                os.remove(final)
 
-def get_download_list_youtube(url):
-    if os.path.exists("info.json"):
-        print("use exists json file")
-        with open("info.json", "r") as f:
-            content = f.read()
-    else:
-        with sp.Popen(["youtube-dl", "-j", url], stdout=sp.PIPE) as proc:
-            content = proc.stdout.read().decode("utf-8")
-            # with open("info.json", "w") as f:
-            #     f.write(content)
-    return parse_youtube_json(content)
-
-def autonumber_downloaded():
-    number = 0
-    for i in range(len(dllist)):
-        # each download has two parts, dash audio and dash video file
-        if i % 2 == 0:
-            number += 1
-        filename = dllist[i]["out"]
-        if os.path.exists(filename):
-            os.rename(filename, str(number)+" - "+filename)
-
-def get_download_list_ted(url):
-    global dllist
-    # with open("info.json", "rb") as f:
-    #     enc = chardet.detect(f.read(4096))["encoding"]
-    # with open("info.json", "r", encoding=enc.replace("LE","").replace("BE","")) as f:
-    #     info = f.read().split("\n")[:-1]
-    with sp.Popen(["youtube-dl", "--sub-format", "srt", "--sub-lang", "en", "--write-sub", "-j", url], stdout=sp.PIPE) as proc:
+    def parse_json(self, content):
         # discard the last empty line
-        info = proc.stdout.read().decode("utf-8").split("\n")[:-1]
+        info = content.split("\n")[:-1]
+        number = 0
         for line in info:
             episode = json.loads(line)
             if episode["playlist"]:
                 playlist = episode["playlist"]
             else:
                 playlist = ""
-            # put subtitle before video
-            if episode["requested_subtitles"]:
-                dllist.append({"dir":os.path.join(os.getcwd(), playlist.replace('/', '_').replace(':', '-')),
-                    "out":os.path.splitext(episode["_filename"].replace('-'+episode["id"], ''))[0]+".srt", "url":episode["requested_subtitles"]["en"]["url"]})
-            dllist.append({"dir":os.path.join(os.getcwd(), playlist.replace('/', '_').replace(':', '-')),
-                "out":episode["_filename"].replace('-'+episode["id"], ''), "url":episode["url"]})
-            # print("url: " + episode["url"])
-
-def get_download_list_others(url):
-    global dllist
-    with sp.Popen(["youtube-dl", "-j", url], stdout=sp.PIPE) as proc:
-        # discard the last empty line
-        info = proc.stdout.read().decode("utf-8").split("\n")[:-1]
-        for line in info:
-            episode = json.loads(line)
-            dllist.append({"dir":os.path.join(os.getcwd()),
-                "out":episode["_filename"], "url":episode["url"]})
-    # if the url is not supported, exit the application
-    if "episode" not in locals():
-        sys.exit("url not supported")
-    # assume that even if there are several parts, they belong to one file 
-    # after download finish, we will concatenate them.
-    return episode["title"]+'.'+episode["ext"]
-
-def aria2c_download():
-    with rpc.ServerProxy('http://localhost:6800/rpc') as s:
-        mc = rpc.MultiCall(s)
-        for download in dllist:
-            mc.aria2.addUri([download["url"]], {"dir":download["dir"], "out":download["out"], "split":"20"})
-            # mc.aria2.addUri([download["url"]], {"dir":download["dir"], "out":download["out"], "all-proxy":"http://127.0.0.1:1087"})
-            aria2c_download.dlcnt = aria2c_download.dlcnt + 1
-            print(str(aria2c_download.dlcnt) + ". downloading " + download["out"])
-        gids = list(mc()) #real execute, don't forget to call this
-
-        errorCount = {}
-        failedCount = 0
-        while True:
-            mc = rpc.MultiCall(s)
-            for gid in gids:
-                mc.aria2.tellStatus(gid, ["gid", "status", "completedLength"])
-            completed = 0
-            for stat in mc():
-                if stat["status"] == "error":
-                    index = gids.index(stat["gid"])
-                    if index not in errorCount:
-                        errorCount[index] = 1
+            formats = episode["formats"]
+            index = 0
+            # the last dash audio has best quality
+            for fmt in formats:
+                if fmt["format_note"] == "DASH audio":
+                    index += 1
+                else:
+                    break
+            number += 1
+            if self.auto_number:
+                prefix = str(number)+" - "
+            else:
+                prefix = ""
+            basename = prefix + os.path.splitext(episode["_filename"])[0].replace('-'+episode["id"], '')
+            name = basename+"-audio."+formats[index - 1]["ext"]
+            # download the audio with best quality
+            self.dllist.append({"dir":os.path.join(os.getcwd(), playlist.replace('/', '_').replace(':', '-')),
+                "out":name, "url":formats[index - 1]["url"], "id":episode["id"]})
+            print(basename)
+            if self.choose_best:
+                for index in reversed(range(index, len(formats))):
+                    if formats[index]["acodec"] == "none" and formats[index]["vcodec"] != "vp9":
+                        break
+                print("index: {:<2}, vcodec: {:<11}, format: {:<23}, size: {:<11}".format(str(index), formats[index]["vcodec"], formats[index]["format"], str(formats[index]["filesize"])))
+            elif self.video_idx:
+                index = int(self.video_idx)
+                print("index: {:<2}, vcodec: {:<11}, format: {:<23}, size: {:<11}".format(str(index), formats[index]["vcodec"], formats[index]["format"], str(formats[index]["filesize"])))
+            else:
+                for index in range(index, len(formats)):
+                    if formats[index]["acodec"] == "none":
+                        print("index: {:<2}, vcodec: {:<11}, format: {:<23}, size: {:<11}".format(str(index), formats[index]["vcodec"], formats[index]["format"], str(formats[index]["filesize"])))
                     else:
-                        errorCount[index] += 1
-                    if errorCount[index] > 5:
-                        failedCount += 1
-                        print("can not download: "+dllist[index]["out"])
-                        print(dllist[index]["url"])
-                        continue
-                    gids.remove(stat["gid"])
-                    print("download again: " + dllist[index]["out"])
-                    s.aria2.removeDownloadResult(stat["gid"])
-                    gid = s.aria2.addUri([dllist[index]["url"]], {"dir":dllist[index]["dir"], "out":dllist[index]["out"]})
-                    gids.insert(index, gid)
-                elif stat["status"] == "complete":
-                    completed += 1
-            if completed + failedCount == len(gids):
-                break
+                        break
+                index = int(input("select index:"))
+            name = basename+"-video."+formats[index]["ext"]
+            self.dllist.append({"dir":os.path.join(os.getcwd(), playlist.replace('/', '_').replace(':', '-')),
+                "out":name, "url":formats[index]["url"], "id":episode["id"]})
+            # print("url:"+formats[index]["url"])
+
+    def autonumber_downloaded(self):
+        number = 0
+        for i in range(len(self.dllist)):
+            # each download has two parts, dash audio and dash video file
+            if i % 2 == 0:
+                number += 1
+            filename = self.dllist[i]["out"]
+            if os.path.exists(filename):
+                os.rename(filename, str(number)+" - "+filename)
+
+class TedDownloader(BaseDownloader):
+
+    def __init__(self, args, url):
+        self.url = url
+        self.dllist = []
+
+    def get_download_list(self):
+        # with open("info.json", "rb") as f:
+        #     enc = chardet.detect(f.read(4096))["encoding"]
+        # with open("info.json", "r", encoding=enc.replace("LE","").replace("BE","")) as f:
+        #     info = f.read().split("\n")[:-1]
+        with sp.Popen(["youtube-dl", "--sub-format", "srt", "--sub-lang", "en", "--write-sub", "-j", self.url], stdout=sp.PIPE) as proc:
+            # discard the last empty line
+            info = proc.stdout.read().decode("utf-8").split("\n")[:-1]
+            for line in info:
+                episode = json.loads(line)
+                if episode["playlist"]:
+                    playlist = episode["playlist"]
+                else:
+                    playlist = ""
+                # put subtitle before video
+                if episode["requested_subtitles"]:
+                    self.dllist.append({"dir":os.path.join(os.getcwd(), playlist.replace('/', '_').replace(':', '-')),
+                        "out":os.path.splitext(episode["_filename"].replace('-'+episode["id"], ''))[0]+".srt", "url":episode["requested_subtitles"]["en"]["url"]})
+                self.dllist.append({"dir":os.path.join(os.getcwd(), playlist.replace('/', '_').replace(':', '-')),
+                    "out":episode["_filename"].replace('-'+episode["id"], ''), "url":episode["url"]})
+                # print("url: " + episode["url"])
+        return self.dllist
+
+    def merge_channels(self):
+        i = 0
+        while i < len(self.dllist):
+            srtFile = ""
+            if os.path.splitext(self.dllist[i]["out"])[1] == ".srt":
+                srtFile = os.path.join(self.dllist[i]["dir"], self.dllist[i]["out"])
+                videoFile = os.path.join(self.dllist[i+1]["dir"], self.dllist[i+1]["out"])
+                i = i + 2
             else:
-                time.sleep(3)
+                videoFile = os.path.join(self.dllist[i]["dir"], self.dllist[i]["out"])
+                i = i + 1
 
-aria2c_download.dlcnt = 0
+            if not os.path.exists(videoFile):
+                continue
+            if srtFile != "":
+                # use mkv to merge the video and srt
+                final = os.path.splitext(videoFile)[0]+".mkv"
+                result = sp.run(['ffmpeg', '-y', '-i', videoFile, '-i', srtFile, '-map', '0:0', '-map', '0:1', '-map', '1:0', 
+                    '-vcodec', 'copy', '-acodec', 'copy', '-scodec', 'copy', final], stdout=sp.PIPE, stderr=sp.PIPE)
+                if result.returncode == 0:
+                    os.remove(videoFile)
+                    os.remove(srtFile)
+                    print("final file:" + final)
+                else:
+                    print("failed to merge video: " + final)
+                    os.remove(final)
 
-def merge_youtube():
-    i = 0
-    while i < len(dllist):
-        # each download has two parts, dash audio and dash video file
-        audioFile = os.path.join(dllist[i]["dir"], dllist[i]["out"])
-        videoFile = os.path.join(dllist[i+1]["dir"], dllist[i+1]["out"])
-        if not os.path.exists(audioFile) or not os.path.exists(videoFile):
-            i = i + 2
-            continue
-        final = os.path.splitext(videoFile.replace('-video', ''))[0]+".mkv"
-        i = i + 2
-        # use mkv to merge the video and audio
-        result = sp.run(['ffmpeg', '-y', '-i', videoFile, '-i', audioFile, '-map', '0:0', '-map', '1:0', '-vcodec', 'copy', '-acodec', 'copy', final],
-                stdout=sp.PIPE, stderr=sp.PIPE)
-        if result.returncode == 0:
-            # remove the orignal files
-            os.remove(videoFile)
-            os.remove(audioFile)
-            print("final file:" + final)
-        else:
-            print("failed to merge video: " + final)
-            os.remove(final)
+class MiscDownloader(BaseDownloader):
 
-def merge_ted():
-    i = 0
-    while i < len(dllist):
-        srtFile = ""
-        if os.path.splitext(dllist[i]["out"])[1] == ".srt":
-            srtFile = os.path.join(dllist[i]["dir"], dllist[i]["out"])
-            videoFile = os.path.join(dllist[i+1]["dir"], dllist[i+1]["out"])
-            i = i + 2
-        else:
-            videoFile = os.path.join(dllist[i]["dir"], dllist[i]["out"])
-            i = i + 1
+    def __init__(self, args, url):
+        self.url = url
+        self.dllist = []
 
-        if not os.path.exists(videoFile):
-            continue
-        if srtFile != "":
-            # use mkv to merge the video and srt
-            final = os.path.splitext(videoFile)[0]+".mkv"
-            result = sp.run(['ffmpeg', '-y', '-i', videoFile, '-i', srtFile, '-map', '0:0', '-map', '0:1', '-map', '1:0', 
-                '-vcodec', 'copy', '-acodec', 'copy', '-scodec', 'copy', final], stdout=sp.PIPE, stderr=sp.PIPE)
+    def get_download_list(self):
+        with sp.Popen(["youtube-dl", "-j", self.url], stdout=sp.PIPE) as proc:
+            # discard the last empty line
+            info = proc.stdout.read().decode("utf-8").split("\n")[:-1]
+            for line in info:
+                episode = json.loads(line)
+                self.dllist.append({"dir":os.path.join(os.getcwd()),
+                    "out":episode["_filename"], "url":episode["url"]})
+        # if the url is not supported, exit the application
+        if "episode" not in locals():
+            sys.exit("url not supported")
+        # assume that even if there are several parts, they belong to one file 
+        # after download finish, we will concatenate them.
+        self.final = episode["title"]+'.'+episode["ext"]
+        return self.dllist
+
+    def merge_channels(self):
+        if len(self.dllist) > 1:
+            tmp = tempfile.mkstemp(suffix=".txt", dir=os.getcwd(), text=True)[1]
+            with open(tmp, "w") as f:
+                for download in self.dllist:
+                    f.write("file '"+download["out"]+"'\n")
+            # refer to https://trac.ffmpeg.org/wiki/Concatenate
+            result = sp.run(['ffmpeg', '-y', '-f', 'concat', '-i', tmp, '-c', 'copy', self.final], stdout=sp.PIPE, stderr=sp.PIPE)
             if result.returncode == 0:
-                os.remove(videoFile)
-                os.remove(srtFile)
-                print("final file:" + final)
+                os.remove(tmp)
+                for download in self.dllist:
+                    os.remove(download["out"])
             else:
-                print("failed to merge video: " + final)
-                os.remove(final)
-
-def merge_others(final):
-    if len(dllist) > 1:
-        tmp = tempfile.mkstemp(suffix=".txt", dir=os.getcwd(), text=True)[1]
-        with open(tmp, "w") as f:
-            for download in dllist:
-                f.write("file '"+download["out"]+"'\n")
-        # refer to https://trac.ffmpeg.org/wiki/Concatenate
-        result = sp.run(['ffmpeg', '-y', '-f', 'concat', '-i', tmp, '-c', 'copy', final], stdout=sp.PIPE, stderr=sp.PIPE)
-        if result.returncode == 0:
-            os.remove(tmp)
-            for download in dllist:
-                os.remove(download["out"])
+                print("fail to merge video:" + self.final)
+                os.remove(self.final)
         else:
-            print("fail to merge video:" + final)
-            os.remove(final)
-    else:
-        if os.path.exists(dllist[0]["out"]):
-            os.rename(dllist[0]["out"], final)
-    # movist doesn't support f4v, convert to mp4, just change the file format, it's fast
-    if sys.platform == "darwin" and os.path.splitext(final)[1] == ".f4v" and os.path.exists(final):
-        result = sp.run(['ffmpeg', '-y', '-i', final, '-vcodec', 'copy', '-acodec', 'copy', os.path.splitext(final)[0]+".mp4"], stdout=sp.PIPE, stderr=sp.PIPE)
-        if result.returncode == 0:
-            os.remove(final)
-        else:
-            print("fail to merge video:" + final)
-            os.remove(final)
-    print("final file:" + final)
+            if os.path.exists(self.dllist[0]["out"]):
+                os.rename(self.dllist[0]["out"], self.final)
 
-def download_video(url):
+        # movist doesn't support f4v, convert to mp4, just change the file format, it's fast
+        if sys.platform == "darwin" and os.path.splitext(self.final)[1] == ".f4v" and os.path.exists(self.final):
+            result = sp.run(['ffmpeg', '-y', '-i', self.final, '-vcodec', 'copy', '-acodec', 'copy', os.path.splitext(self.final)[0]+".mp4"], stdout=sp.PIPE, stderr=sp.PIPE)
+            if result.returncode == 0:
+                os.remove(self.final)
+            else:
+                print("fail to merge video:" + self.final)
+                os.remove(self.final)
+        print("final file:" + self.final)
+
+class Aria2c(object):
+
+    def __init__(self, proxy):
+        self.dlcnt = 0
+        self.proxy = proxy
+
+    def download(self, dllist):
+        with rpc.ServerProxy('http://localhost:6800/rpc') as s:
+            mc = rpc.MultiCall(s)
+            for download in dllist:
+                if self.proxy:
+                    mc.aria2.addUri([download["url"]], {"dir":download["dir"], "out":download["out"], "all-proxy":"http://127.0.0.1:8118"})
+                else:
+                    mc.aria2.addUri([download["url"]], {"dir":download["dir"], "out":download["out"]})
+                self.dlcnt = self.dlcnt + 1
+                print(str(self.dlcnt) + ". downloading " + download["out"])
+            gids = list(mc()) #real execute, don't forget to call this
+
+            errorCount = {}
+            failedCount = 0
+            while True:
+                mc = rpc.MultiCall(s)
+                for gid in gids:
+                    mc.aria2.tellStatus(gid, ["gid", "status", "completedLength"])
+                completed = 0
+                for stat in mc():
+                    if stat["status"] == "error":
+                        index = gids.index(stat["gid"])
+                        if index not in errorCount:
+                            errorCount[index] = 1
+                        else:
+                            errorCount[index] += 1
+                        if errorCount[index] > 5:
+                            failedCount += 1
+                            print("can not download: "+dllist[index]["out"])
+                            print(dllist[index]["url"])
+                            continue
+                        gids.remove(stat["gid"])
+                        print("download again: " + dllist[index]["out"])
+                        s.aria2.removeDownloadResult(stat["gid"])
+                        gid = s.aria2.addUri([dllist[index]["url"]], {"dir":dllist[index]["dir"], "out":dllist[index]["out"]})
+                        gids.insert(index, gid)
+                    elif stat["status"] == "complete":
+                        completed += 1
+                if completed + failedCount == len(gids):
+                    break
+                else:
+                    time.sleep(3)
+
+def download_video(url, args):
     #youtube.com or youtu.be
     if "youtu" in url:
-        get_download_list_youtube(url)
-        # for remedy
-        # autonumber_downloaded()
+        downloader = YoutubeDownloader(args, url)
+        proxy = True
     elif "ted.com" in url:
-        get_download_list_ted(url)
+        downloader = TedDownloader(args, url)
+        proxy = True
     else:
-        others_final = get_download_list_others(url)
+        downloader = MiscDownloader(args, url)
+        proxy = False
+    dllist = downloader.get_download_list()
+    # override the argument.
+    if args.proxy:
+        proxy = bool(args.proxy)
 
-    # sys.exit("exit")
-    aria2c_download()
+    # return
+    aria2c = Aria2c(proxy)
+    aria2c.download(dllist)
+    downloader.merge_channels()
 
-    if "youtu" in url:
-        merge_youtube()
-    elif "ted.com" in url:
-        merge_ted()
-    else:
-        merge_others(others_final)
-
-def bundle_download(listFile):
-    with open(listFile, "r") as f:
+def bundle_download(arguments):
+    with open(arguments.url, "r") as f:
         urls = f.readlines()
         # for url in urls:
         #     print(url)
         #     download_video(url)
         with Pool(5) as p:
-            p.map(download_video, urls)
+            p.map(partial(download_video, args=arguments), urls)
 
 def main():
-    global auto_number
-    global best
     arg_parser = argparse.ArgumentParser(
         prog='dl-video',
         epilog='dl-video',
@@ -305,6 +343,26 @@ def main():
         help='choose best video quality'
     )
     arg_parser.add_argument(
+        '-i',
+        '--index',
+        nargs=1,
+        type=int,
+        help='choose video index manually'
+    )
+    arg_parser.add_argument(
+        '-s',
+        '--subtitle',
+        action='store_true',
+        help='download subtitle'
+    )
+    arg_parser.add_argument(
+        '-p',
+        '--proxy',
+        nargs=1,
+        type=int,
+        help='choose proxy or not manually'
+    )
+    arg_parser.add_argument(
         '-f',
         '--file_input',
         action='store_true',
@@ -312,17 +370,10 @@ def main():
     )
 
     args = arg_parser.parse_args()
-    if args.auto_number:
-        auto_number = args.auto_number
-        download_video(args.url)
-    elif args.best:
-        best = True
-        download_video(args.url)
-    elif args.file_input:
-        best = True
-        bundle_download(args.url)
+    if args.file_input:
+        bundle_download(args)
     else:
-        download_video(args.url)
+        download_video(args.url, args)
 
 if __name__ == "__main__":
     main()
