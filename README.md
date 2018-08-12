@@ -11,13 +11,12 @@ positional arguments:
 
 optional arguments:
   -h, --help            show this help message and exit
-  -an, --auto_number    append number before file name which is auto increased
+  -an, --auto_number    append number before file name for playlist
   -b, --best            choose best video quality
   -i INDEX, --index INDEX
                         choose video index manually
   -p PROXY, --proxy PROXY
                         [0/1] choose proxy or not manually
-  -f, --file_input      input is a file contains the video urls
   ```
 if you choose -b or -i, then you can download in background with &.  
 by default, youtube and ted will be downloaded with proxy `http://127.0.0.1:8118`.  

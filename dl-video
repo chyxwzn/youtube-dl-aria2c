@@ -413,15 +413,9 @@ def main():
         type=int,
         help='[0/1] choose proxy or not manually'
     )
-    arg_parser.add_argument(
-        '-f',
-        '--file_input',
-        action='store_true',
-        help='input is a file contains the video urls'
-    )
 
     args = arg_parser.parse_args()
-    if args.file_input:
+    if not args.url.startswith("http"):
         bundle_download(args)
     else:
         download_video(args.url, args)
