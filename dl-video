@@ -2,18 +2,13 @@
 # -*- coding: utf-8 -*-
 import subprocess as sp
 import xmlrpc.client as rpc
-import urllib.parse as up
-import urllib.request as request
-from bs4 import BeautifulSoup
 from multiprocessing import Pool
 import sys
 import os
-import os.path
 import json
 import time
 import tempfile
 import chardet
-import io
 import argparse
 from abc import ABC, abstractmethod
 from functools import partial
@@ -178,7 +173,7 @@ class YoutubeDownloader(BaseDownloader):
 
     def autonumber_downloaded(self):
         number = 0
-        for i, dldict in enumerate(self.dllist):
+        for dldict in self.dllist:
             for key, dl in dldict.items():
                 filename = dl["out"]
                 if os.path.exists(filename):
@@ -390,13 +385,13 @@ def main():
     )
     arg_parser.add_argument(
         'url',
-        help="the video's url"
+        help="the video's url or file contains urls"
     )
     arg_parser.add_argument(
         '-an',
         '--auto_number',
         action='store_true',
-        help='auto increase number'
+        help='append number before file name which is auto increased'
     )
     arg_parser.add_argument(
         '-b',
@@ -416,13 +411,13 @@ def main():
         '--proxy',
         nargs=1,
         type=int,
-        help='choose proxy or not manually'
+        help='[0/1] choose proxy or not manually'
     )
     arg_parser.add_argument(
         '-f',
         '--file_input',
         action='store_true',
-        help='file contains the video urls'
+        help='input is a file contains the video urls'
     )
 
     args = arg_parser.parse_args()
