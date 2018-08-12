@@ -2,7 +2,7 @@
 Integrate youtube-dl with aria2c, download video, audio, subtitle seperately, then use ffmpeg to merge them.
 # usage
 ```text
-usage: dl-video [-h] [-an] [-b] [-i INDEX] [-p PROXY] [-f] url
+usage: dl-video [-h] [-an] [-b] [-i INDEX] [-p PROXY] url
 
 download video easily
 
