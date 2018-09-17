@@ -131,7 +131,7 @@ class YoutubeDownloader(BaseDownloader):
                         formats[index]["format"],
                         str(formats[index]["filesize"])))
             elif self.video_idx:
-                index = int(self.video_idx)
+                index = self.video_idx[0]
                 print(
                     "index: {:<2}, vcodec: {:<11}, format: {:<23}, size: {:<11}".
                     format(
