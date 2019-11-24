@@ -99,7 +99,7 @@ class YoutubeDownloader(BaseDownloader):
             index = 0
             # the last dash audio has best quality
             for fmt in formats:
-                if fmt["format_note"] == "DASH audio":
+                if fmt["format_note"] == "tiny":
                     index += 1
                 else:
                     break
@@ -348,15 +348,13 @@ class Aria2c(object):
 
 def download_video(url, args):
     #youtube.com or youtu.be
+    proxy = False
     if "youtu" in url:
         downloader = YoutubeDownloader(args, url)
-        proxy = True
     elif "ted.com" in url:
         downloader = TedDownloader(args, url)
-        proxy = True
     else:
         downloader = MiscDownloader(args, url)
-        proxy = False
     dllist = downloader.get_download_list()
     # override the argument.
     if args.proxy:
